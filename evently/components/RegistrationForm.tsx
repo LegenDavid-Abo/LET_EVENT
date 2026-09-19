@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Minus, Plus } from "lucide-react";
 import { TextField } from "@/components/ui/Field";
 import Button from "@/components/ui/Button";
@@ -12,15 +12,57 @@ interface RegistrationFormProps {
   fields: any[];
 }
 
+interface SavedRegistration {
+  registration_id: string;
+  ticket_url: string;
+  email?: string;
+}
+
+function storageKey(slug: string) {
+  return `evently:registration:${slug}`;
+}
+
+// Best-effort read/write — private browsing or blocked storage should
+// never break the page, it just means we can't remember the visit.
+function readSavedRegistration(slug: string): SavedRegistration | null {
+  try {
+    const raw = localStorage.getItem(storageKey(slug));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveRegistration(slug: string, value: SavedRegistration) {
+  try {
+    localStorage.setItem(storageKey(slug), JSON.stringify(value));
+  } catch {
+    // Storage unavailable — the registration still succeeded server-side,
+    // this only affects the "remember me on this device" convenience.
+  }
+}
+
 export default function RegistrationForm({ slug, max, fields }: RegistrationFormProps) {
   const [qty, setQty] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [done, setDone] = useState<{ registration_id: string; ticket_url: string } | null>(null);
+  const [done, setDone] = useState<SavedRegistration | null>(null);
+  const [returning, setReturning] = useState(false);
   const [form, setForm] = useState({ full_name: "", email: "", address: "" });
   const [phone, setPhone] = useState("");
   const [phoneValid, setPhoneValid] = useState(true);
   const [custom, setCustom] = useState<Record<string, string>>({});
+
+  // If this browser already completed a registration for this event,
+  // go straight to the "you're registered" / ticket view instead of
+  // showing the form again.
+  useEffect(() => {
+    const saved = readSavedRegistration(slug);
+    if (saved) {
+      setDone(saved);
+      setReturning(true);
+    }
+  }, [slug]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -38,7 +80,15 @@ export default function RegistrationForm({ slug, max, fields }: RegistrationForm
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Registration failed");
-      setDone(data);
+
+      const record: SavedRegistration = {
+        registration_id: data.registration_id,
+        ticket_url: data.ticket_url,
+        email: form.email
+      };
+      saveRegistration(slug, record);
+      setDone(record);
+      setReturning(false);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -52,15 +102,19 @@ export default function RegistrationForm({ slug, max, fields }: RegistrationForm
         <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-full bg-brass-gradient text-2xl text-ink-950">
           ✓
         </div>
-        <h2 className="text-3xl font-medium">You&rsquo;re registered.</h2>
+        <h2 className="text-3xl font-medium">
+          {returning ? "Welcome back — you're already registered." : "You're registered."}
+        </h2>
         <p className="mt-3 text-bone/55">Registration {done.registration_id}</p>
-        <a
+        
           className="mt-7 inline-flex rounded-xl bg-brass-gradient px-5 py-3 font-semibold text-ink-950"
           href={done.ticket_url}
         >
           Open ticket
         </a>
-        <p className="mt-4 text-xs text-bone/35">Your ticket email is being sent to {form.email}.</p>
+        {!returning && (
+          <p className="mt-4 text-xs text-bone/35">Your ticket email is being sent to {done.email}.</p>
+        )}
       </div>
     );
   }
@@ -128,3 +182,4 @@ export default function RegistrationForm({ slug, max, fields }: RegistrationForm
     </form>
   );
 }
+        
